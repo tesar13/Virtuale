@@ -5,7 +5,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3095872/h2h/276506/276502"
+URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3096189/h2h/276506/276502"
 
 HEADERS = {
     "User-Agent": (
