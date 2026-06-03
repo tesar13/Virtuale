@@ -1,4 +1,5 @@
 import os
+import subprocess
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -15,6 +16,7 @@ HEADERS = {
 }
 
 PLIK_WYNIKOW = "wyniki.csv"
+GITHUB_REPO = "tesar13/Virtuale"
 
 
 def parse_match_row(row):
@@ -140,6 +142,72 @@ def wczytaj_istniejace():
     return pd.read_csv(PLIK_WYNIKOW)
 
 
+def push_to_github():
+
+    token = os.getenv("GITHUB_TOKEN")
+
+    if not token:
+        print("Brak zmiennej GITHUB_TOKEN.")
+        return
+
+    try:
+        subprocess.run(
+            ["git", "config", "--global", "user.name", "render-bot"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "config", "--global", "user.email", "render-bot@render.com"],
+            check=True
+        )
+
+        subprocess.run(
+            [
+                "git",
+                "remote",
+                "set-url",
+                "origin",
+                f"https://{token}@github.com/{GITHUB_REPO}.git"
+            ],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "add", PLIK_WYNIKOW],
+            check=True
+        )
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True
+        )
+
+        if not status.stdout.strip():
+            print("Brak zmian do commitowania.")
+            return
+
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "-m",
+                f"Aktualizacja wynikow {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            ],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "push"],
+            check=True
+        )
+
+        print("Zmiany wysłane na GitHub.")
+
+    except Exception as e:
+        print(f"Błąd pushowania do GitHub: {e}")
+
+
 def main():
     nowe_dane = pobierz_dane()
 
@@ -185,7 +253,7 @@ def main():
         columns=["Tura", "Godzina", "Mecz", "Wynik", "Data"]
     )
 
-    # NOWE REKORDY NA GÓRZE
+    # nowe rekordy zawsze na górze
     df_koncowy = pd.concat(
         [df_nowe, df_stary],
         ignore_index=True
@@ -199,6 +267,8 @@ def main():
 
     print(f"Dodano {len(df_nowe)} nowych rekordów.")
     print(f"Łącznie rekordów: {len(df_koncowy)}")
+
+    push_to_github()
 
 
 if __name__ == "__main__":
