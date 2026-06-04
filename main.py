@@ -1,11 +1,12 @@
-import os
-import subprocess
-import requests
-import pandas as pd
-from bs4 import BeautifulSoup
+import base64
+from io import StringIO
 from datetime import datetime
 
-URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3096189/h2h/276506/276502"
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
+URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3095872/h2h/276506/276502"
 
 HEADERS = {
     "User-Agent": (
@@ -15,8 +16,9 @@ HEADERS = {
     )
 }
 
-PLIK_WYNIKOW = "wyniki.csv"
-GITHUB_REPO = "tesar13/Virtuale"
+REPO_OWNER = "tesar13"
+REPO_NAME = "Virtuale"
+CSV_PATH = "wyniki.csv"
 
 
 def parse_match_row(row):
@@ -53,22 +55,15 @@ def parse_match_row(row):
         class_="hidden-xs-up visible-sm-up wrap"
     )
 
-    home_team = (
-        home_div.get_text(strip=True)
-        if home_div
-        else ""
-    )
-
     away_div = right_col.find(
         "div",
         class_="hidden-xs-up visible-sm-up wrap"
     )
 
-    away_team = (
-        away_div.get_text(strip=True)
-        if away_div
-        else ""
-    )
+    home_team = home_div.get_text(strip=True) if home_div else ""
+    away_team = away_div.get_text(strip=True) if away_div else ""
+
+    godzina = ""
 
     time_divs = center_col.find_all(
         "div",
@@ -76,17 +71,15 @@ def parse_match_row(row):
         recursive=False
     )
 
-    godzina = ""
-
     if len(time_divs) >= 1:
         godzina = time_divs[0].get_text(strip=True)
+
+    wynik = ""
 
     wynik_div = center_col.find(
         "div",
         attrs={"aria-label": "Wynik"}
     )
-
-    wynik = ""
 
     if wynik_div:
         nums = []
@@ -100,21 +93,27 @@ def parse_match_row(row):
         if len(nums) >= 2:
             wynik = f"{nums[0]}:{nums[1]}"
 
-    mecz = f"{home_team} - {away_team}"
-
     return {
         "Tura": tura,
         "Godzina": godzina,
-        "Mecz": mecz,
+        "Mecz": f"{home_team} - {away_team}",
         "Wynik": wynik
     }
 
 
 def pobierz_dane():
-    r = requests.get(URL, headers=HEADERS, timeout=30)
-    r.raise_for_status()
+    response = requests.get(
+        URL,
+        headers=HEADERS,
+        timeout=30
+    )
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    response.raise_for_status()
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
+    )
 
     rows = soup.select("tbody tr.cursor-pointer")
 
@@ -124,7 +123,9 @@ def pobierz_dane():
         rekord = parse_match_row(row)
 
         if rekord:
-            rekord["Data"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rekord["Data"] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             dane.append(rekord)
 
         if len(dane) >= 5:
@@ -133,79 +134,91 @@ def pobierz_dane():
     return dane
 
 
-def wczytaj_istniejace():
-    if not os.path.exists(PLIK_WYNIKOW):
-        return pd.DataFrame(
-            columns=["Tura", "Godzina", "Mecz", "Wynik", "Data"]
-        )
-
-    return pd.read_csv(PLIK_WYNIKOW)
-
-
-def push_to_github():
-
+def github_headers():
     token = os.getenv("GITHUB_TOKEN")
 
     if not token:
-        print("Brak zmiennej GITHUB_TOKEN.")
-        return
-
-    try:
-        subprocess.run(
-            ["git", "config", "--global", "user.name", "render-bot"],
-            check=True
+        raise Exception(
+            "Brak zmiennej GITHUB_TOKEN na Renderze."
         )
 
-        subprocess.run(
-            ["git", "config", "--global", "user.email", "render-bot@render.com"],
-            check=True
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+
+def pobierz_csv_z_github():
+    url = (
+        f"https://api.github.com/repos/"
+        f"{REPO_OWNER}/{REPO_NAME}/contents/{CSV_PATH}"
+    )
+
+    r = requests.get(
+        url,
+        headers=github_headers()
+    )
+
+    if r.status_code == 404:
+        pusty = pd.DataFrame(
+            columns=[
+                "Tura",
+                "Godzina",
+                "Mecz",
+                "Wynik",
+                "Data"
+            ]
         )
 
-        subprocess.run(
-            [
-                "git",
-                "remote",
-                "set-url",
-                "origin",
-                f"https://{token}@github.com/{GITHUB_REPO}.git"
-            ],
-            check=True
-        )
+        return pusty, None
 
-        subprocess.run(
-            ["git", "add", PLIK_WYNIKOW],
-            check=True
-        )
+    r.raise_for_status()
 
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True
-        )
+    data = r.json()
 
-        if not status.stdout.strip():
-            print("Brak zmian do commitowania.")
-            return
+    content = base64.b64decode(
+        data["content"]
+    ).decode("utf-8-sig")
 
-        subprocess.run(
-            [
-                "git",
-                "commit",
-                "-m",
-                f"Aktualizacja wynikow {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            ],
-            check=True
-        )
+    df = pd.read_csv(StringIO(content))
 
-        subprocess.run(
-            ["git", "push"],
-            check=True
-        )
+    return df, data["sha"]
 
-        print("Zmiany wysłane na GitHub.")
 
-    except Exception as e:
-        print(f"Błąd pushowania do GitHub: {e}")
+def zapisz_csv_na_github(df, sha):
+    csv_text = df.to_csv(
+        index=False
+    )
+
+    content = base64.b64encode(
+        csv_text.encode("utf-8")
+    ).decode()
+
+    url = (
+        f"https://api.github.com/repos/"
+        f"{REPO_OWNER}/{REPO_NAME}/contents/{CSV_PATH}"
+    )
+
+    payload = {
+        "message": (
+            f"Aktualizacja wynikow "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        ),
+        "content": content
+    }
+
+    if sha:
+        payload["sha"] = sha
+
+    r = requests.put(
+        url,
+        headers=github_headers(),
+        json=payload
+    )
+
+    r.raise_for_status()
+
+    print("Plik zapisany na GitHub.")
 
 
 def main():
@@ -215,7 +228,7 @@ def main():
         print("Brak danych.")
         return
 
-    df_stary = wczytaj_istniejace()
+    df_stary, sha = pobierz_csv_z_github()
 
     pierwsze_10 = df_stary.head(10)
 
@@ -223,21 +236,29 @@ def main():
 
     for rekord in nowe_dane:
 
+        if len(df_stary) == 0:
+            nowe_bez_duplikatow.append(rekord)
+            continue
+
         duplikat = (
             (
-                pierwsze_10["Tura"].astype(str) == str(rekord["Tura"])
+                pierwsze_10["Tura"].astype(str)
+                == str(rekord["Tura"])
             )
             &
             (
-                pierwsze_10["Godzina"].astype(str) == str(rekord["Godzina"])
+                pierwsze_10["Godzina"].astype(str)
+                == str(rekord["Godzina"])
             )
             &
             (
-                pierwsze_10["Mecz"].astype(str) == str(rekord["Mecz"])
+                pierwsze_10["Mecz"].astype(str)
+                == str(rekord["Mecz"])
             )
             &
             (
-                pierwsze_10["Wynik"].astype(str) == str(rekord["Wynik"])
+                pierwsze_10["Wynik"].astype(str)
+                == str(rekord["Wynik"])
             )
         ).any()
 
@@ -249,27 +270,28 @@ def main():
         return
 
     df_nowe = pd.DataFrame(
-        nowe_bez_duplikatow,
-        columns=["Tura", "Godzina", "Mecz", "Wynik", "Data"]
+        nowe_bez_duplikatow
     )
 
-    # nowe rekordy zawsze na górze
     df_koncowy = pd.concat(
         [df_nowe, df_stary],
         ignore_index=True
     )
 
-    df_koncowy.to_csv(
-        PLIK_WYNIKOW,
-        index=False,
-        encoding="utf-8-sig"
+    zapisz_csv_na_github(
+        df_koncowy,
+        sha
     )
 
-    print(f"Dodano {len(df_nowe)} nowych rekordów.")
-    print(f"Łącznie rekordów: {len(df_koncowy)}")
+    print(
+        f"Dodano {len(df_nowe)} nowych rekordów."
+    )
 
-    push_to_github()
+    print(
+        f"Łącznie rekordów: {len(df_koncowy)}"
+    )
 
 
 if __name__ == "__main__":
+    import os
     main()
