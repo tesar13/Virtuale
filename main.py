@@ -6,7 +6,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 print("WERSJA API GITHUB 2026")
-URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3096482/h2h/276506/276502"
+URL = "https://st-cdn001.akamaized.net/fortunagamesvirtuals/pl/1/season/3099557/h2h/276506/276502"
 
 HEADERS = {
     "User-Agent": (
